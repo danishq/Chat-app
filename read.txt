@@ -1,0 +1,1480 @@
+===== ./.mvn/wrapper/maven-wrapper.properties =====
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+wrapperVersion=3.3.2
+distributionType=only-script
+distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.10/apache-maven-3.9.10-bin.zip
+
+
+===== ./src/main/java/com/example/chat/ChatAppApplication.java =====
+
+package com.example.chat;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class ChatAppApplication {
+
+  public static void main(String[] args) {
+    SpringApplication.run(ChatAppApplication.class, args);
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/config/WebSocketConfig.java =====
+
+package com.example.chat.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.web.socket.config.annotation.*;
+
+@Configuration
+@EnableWebSocketMessageBroker
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+
+  @Override
+  public void configureMessageBroker(MessageBrokerRegistry config) {
+    config.enableSimpleBroker("/topic");
+    config.setApplicationDestinationPrefixes("/app");
+  }
+
+  @Override
+  public void registerStompEndpoints(StompEndpointRegistry registry) {
+    registry.addEndpoint("/ws").withSockJS();
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/controller/ChatController.java =====
+package com.example.chat.controller;
+
+import com.example.chat.model.ChatMessage;
+import com.example.chat.model.User;
+import com.example.chat.repository.MessageRepository;
+import com.example.chat.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.handler.annotation.*;
+import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.stereotype.Controller;
+
+import java.time.LocalDateTime;
+
+@Controller
+public class ChatController {
+
+  @Autowired
+  private MessageRepository messageRepo;
+
+  @Autowired
+  private UserRepository userRepo;
+
+  @MessageMapping("/chat.sendMessage")
+  @SendTo("/topic/public")
+  public ChatMessage sendMessage(@Payload ChatMessage message) {
+    try {
+      // Use the sender username from the message (sent from frontend)
+      User sender = userRepo.findByUsername(message.getSenderUsername());
+      if (sender == null) {
+        // Return error message
+        ChatMessage errorMessage = new ChatMessage();
+        errorMessage.setSenderUsername("System");
+        errorMessage.setRecipientUsername(message.getSenderUsername());
+        errorMessage.setContent("Error: Sender '" + message.getSenderUsername() + "' not found. Please log in again.");
+        errorMessage.setTimestamp(LocalDateTime.now());
+        return errorMessage;
+      }
+
+      // Find recipient
+      User recipient = userRepo.findByUsername(message.getRecipientUsername());
+      if (recipient == null) {
+        // Return error message
+        ChatMessage errorMessage = new ChatMessage();
+        errorMessage.setSenderUsername("System");
+        errorMessage.setRecipientUsername(message.getSenderUsername());
+        errorMessage.setContent("Error: Recipient '" + message.getRecipientUsername()
+            + "' not found. Please make sure they are registered.");
+        errorMessage.setTimestamp(LocalDateTime.now());
+        return errorMessage;
+      }
+
+      // Set up the message
+      message.setSender(sender);
+      message.setRecipient(recipient);
+      message.setTimestamp(LocalDateTime.now());
+
+      // Save to database
+      ChatMessage savedMessage = messageRepo.save(message);
+
+      // Set the usernames for the WebSocket response
+      savedMessage.setSenderUsername(sender.getUsername());
+      savedMessage.setRecipientUsername(recipient.getUsername());
+
+      return savedMessage;
+
+    } catch (Exception e) {
+      // Return error message
+      ChatMessage errorMessage = new ChatMessage();
+      errorMessage.setSenderUsername("System");
+      errorMessage.setRecipientUsername(message.getSenderUsername());
+      errorMessage.setContent("Error sending message: " + e.getMessage());
+      errorMessage.setTimestamp(LocalDateTime.now());
+      return errorMessage;
+    }
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/controller/MessageController.java =====
+package com.example.chat.controller;
+
+import com.example.chat.model.ChatMessage;
+import com.example.chat.model.User;
+import com.example.chat.repository.MessageRepository;
+import com.example.chat.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDateTime;
+
+@RestController
+@RequestMapping("/api")
+public class MessageController {
+
+  @Autowired
+  private MessageRepository messageRepo;
+
+  @Autowired
+  private UserRepository userRepo;
+
+  @PostMapping("/message")
+  public ChatMessage sendMessage(@RequestBody MessageRequest req) {
+    User sender = userRepo.findById(req.getSenderId()).orElse(null);
+    User recipient = userRepo.findByUsername(req.getRecipientUsername());
+
+    if (sender == null || recipient == null)
+      return null;
+
+    ChatMessage msg = new ChatMessage();
+    msg.setSender(sender);
+    msg.setRecipient(recipient);
+    msg.setContent(req.getContent());
+    msg.setTimestamp(LocalDateTime.now());
+
+    return messageRepo.save(msg);
+  }
+
+  static class MessageRequest {
+    private Long senderId;
+    private String recipientUsername;
+    private String content;
+
+    // Getters and Setters
+    public Long getSenderId() {
+      return senderId;
+    }
+
+    public void setSenderId(Long senderId) {
+      this.senderId = senderId;
+    }
+
+    public String getRecipientUsername() {
+      return recipientUsername;
+    }
+
+    public void setRecipientUsername(String recipientUsername) {
+      this.recipientUsername = recipientUsername;
+    }
+
+    public String getContent() {
+      return content;
+    }
+
+    public void setContent(String content) {
+      this.content = content;
+    }
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/controller/PageController.java =====
+package com.example.chat.controller;
+
+import com.example.chat.model.ChatMessage;
+import com.example.chat.model.User;
+import com.example.chat.repository.MessageRepository;
+import com.example.chat.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+
+import jakarta.servlet.http.HttpSession;
+import java.time.LocalDateTime;
+
+@Controller
+public class PageController {
+
+  @Autowired
+  private UserRepository userRepo;
+
+  @Autowired
+  private MessageRepository messageRepo;
+
+  @GetMapping("/")
+  public String home() {
+    return "redirect:/login";
+  }
+
+  @GetMapping("/login")
+  public String loginPage() {
+    return "login";
+  }
+
+  @PostMapping("/login")
+  public String loginUser(@RequestParam String username,
+      @RequestParam String password,
+      HttpSession session,
+      Model model) {
+    try {
+      User user = userRepo.findByUsername(username);
+      if (user == null || !user.getPassword().equals(password)) {
+        model.addAttribute("error", "Invalid username or password");
+        return "login";
+      }
+
+      // Store user in session
+      session.setAttribute("loggedInUser", user);
+      return "redirect:/chat";
+    } catch (Exception e) {
+      e.printStackTrace();
+      model.addAttribute("error", "Login failed: " + e.getMessage());
+      return "login";
+    }
+  }
+
+  @GetMapping("/logout")
+  public String logout(HttpSession session) {
+    session.removeAttribute("loggedInUser");
+    return "redirect:/login";
+  }
+
+  @GetMapping("/chat")
+  public String chatPage(Model model, HttpSession session) {
+    User loggedInUser = (User) session.getAttribute("loggedInUser");
+    if (loggedInUser == null) {
+      return "redirect:/login";
+    }
+
+    model.addAttribute("username", loggedInUser.getUsername());
+    model.addAttribute("messages", messageRepo.findAll());
+    return "chat";
+  }
+
+  @GetMapping("/register")
+  public String registerPage() {
+    return "register";
+  }
+
+  @PostMapping("/register")
+  public String registerUser(@RequestParam String username,
+      @RequestParam String password,
+      HttpSession session,
+      Model model) {
+    try {
+      if (userRepo.findByUsername(username) != null) {
+        model.addAttribute("error", "Username already exists");
+        return "register";
+      }
+
+      User newUser = new User();
+      newUser.setUsername(username);
+      newUser.setPassword(password); // NOTE: Should hash later
+      newUser = userRepo.save(newUser);
+
+      // Auto-login after registration
+      session.setAttribute("loggedInUser", newUser);
+      return "redirect:/chat";
+    } catch (Exception e) {
+      e.printStackTrace();
+      model.addAttribute("error", "Something went wrong: " + e.getMessage());
+      return "register";
+    }
+  }
+
+  @PostMapping("/send-message")
+  public String sendMessage(@RequestParam String recipient,
+      @RequestParam String content,
+      HttpSession session,
+      Model model) {
+    try {
+      User loggedInUser = (User) session.getAttribute("loggedInUser");
+      if (loggedInUser == null) {
+        return "redirect:/login";
+      }
+
+      User recipientUser = userRepo.findByUsername(recipient);
+      if (recipientUser == null) {
+        model.addAttribute("error", "Recipient not found");
+        model.addAttribute("username", loggedInUser.getUsername());
+        model.addAttribute("messages", messageRepo.findAll());
+        return "chat";
+      }
+
+      ChatMessage message = new ChatMessage();
+      message.setSender(loggedInUser);
+      message.setRecipient(recipientUser);
+      message.setContent(content);
+      message.setTimestamp(LocalDateTime.now());
+      messageRepo.save(message);
+
+      return "redirect:/chat";
+    } catch (Exception e) {
+      e.printStackTrace();
+      model.addAttribute("error", "Failed to send message: " + e.getMessage());
+      User loggedInUser = (User) session.getAttribute("loggedInUser");
+      model.addAttribute("username", loggedInUser != null ? loggedInUser.getUsername() : "Guest");
+      model.addAttribute("messages", messageRepo.findAll());
+      return "chat";
+    }
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/controller/UserController.java =====
+package com.example.chat.controller;
+
+import com.example.chat.model.User;
+import com.example.chat.repository.UserRepository;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.ui.Model;
+
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+  @Autowired
+  private UserRepository userRepo;
+
+}
+
+
+===== ./src/main/java/com/example/chat/model/ChatMessage.java =====
+
+package com.example.chat.model;
+
+import jakarta.persistence.*;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "messages")
+public class ChatMessage {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
+
+  @Column(nullable = false)
+  private String content;
+
+  @Column(nullable = false)
+  private LocalDateTime timestamp = LocalDateTime.now();
+
+  @ManyToOne
+  @JoinColumn(name = "user_id", nullable = false)
+  private User sender;
+
+  @ManyToOne
+  @JoinColumn(name = "recipient_id", nullable = false)
+  private User recipient;
+
+  @Transient
+  private String senderUsername;
+
+  @Transient
+  private String recipientUsername;
+
+  public Long getId() {
+    return id;
+  }
+
+  public void setId(Long id) {
+    this.id = id;
+  }
+
+  public String getContent() {
+    return content;
+  }
+
+  public void setContent(String content) {
+    this.content = content;
+  }
+
+  public LocalDateTime getTimestamp() {
+    return timestamp;
+  }
+
+  public void setTimestamp(LocalDateTime timestamp) {
+    this.timestamp = timestamp;
+  }
+
+  public User getSender() {
+    return sender;
+  }
+
+  public void setSender(User sender) {
+    this.sender = sender;
+  }
+
+  public User getRecipient() {
+    return recipient;
+  }
+
+  public void setRecipient(User recipient) {
+    this.recipient = recipient;
+  }
+
+  public String getSenderUsername() {
+    return senderUsername;
+  }
+
+  public void setSenderUsername(String senderUsername) {
+    this.senderUsername = senderUsername;
+  }
+
+  public String getRecipientUsername() {
+    return recipientUsername;
+  }
+
+  public void setRecipientUsername(String recipientUsername) {
+    this.recipientUsername = recipientUsername;
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/model/User.java =====
+
+package com.example.chat.model;
+
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "users")
+public class User {
+
+  @Id
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  private Long id;
+
+  @Column(unique = true, nullable = false)
+  private String username;
+
+  @Column(nullable = false)
+  private String password;
+
+  // Getters and setters
+  public Long getId() {
+    return id;
+  }
+
+  public void setId(Long id) {
+    this.id = id;
+  }
+
+  public String getUsername() {
+    return username;
+  }
+
+  public void setUsername(String username) {
+    this.username = username;
+  }
+
+  public String getPassword() {
+    return password;
+  }
+
+  public void setPassword(String password) {
+    this.password = password;
+  }
+}
+
+
+===== ./src/main/java/com/example/chat/repository/MessageRepository.java =====
+package com.example.chat.repository;
+
+import com.example.chat.model.ChatMessage;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface MessageRepository extends JpaRepository<ChatMessage, Long> {
+}
+
+
+===== ./src/main/java/com/example/chat/repository/UserRepository.java =====
+
+package com.example.chat.repository;
+
+import com.example.chat.model.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface UserRepository extends JpaRepository<User, Long> {
+  User findByUsername(String username);
+}
+
+
+===== ./src/main/resources/application.properties =====
+spring.application.name=chat-app
+server.port=8080
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/chatdb
+spring.datasource.username=danish
+spring.datasource.password=12345
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.show-sql=true
+
+spring.thymeleaf.prefix=classpath:/templates/
+spring.thymeleaf.suffix=.html
+spring.mvc.view.prefix=  # leave blank if using Thymeleaf
+
+
+===== ./src/main/resources/templates/chat.html =====
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Room</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+    }
+    .success {
+      color: green;
+      margin: 10px 0;
+    }
+    .message-form {
+      background: #f5f5f5;
+      padding: 20px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+    .messages {
+      border: 1px solid #ddd;
+      padding: 20px;
+      border-radius: 5px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 10px;
+      border-left: 3px solid #007bff;
+      background: #f9f9f9;
+      animation: fadeIn 0.3s ease-in;
+    }
+    .message.new {
+      border-left-color: #28a745;
+      background: #e8f5e8;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .connection-status {
+      padding: 10px;
+      border-radius: 3px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Welcome to Chat Room, <span th:text="${username}">User</span>!</h1>
+
+  <div id="connection-status" class="connection-status disconnected">
+    Connecting to chat server...
+  </div>
+
+  <div th:if="${error}" class="error" th:text="${error}"></div>
+
+  <div class="message-form">
+    <h3>Send a Message</h3>
+    <form id="messageForm">
+      <input type="text" id="recipientInput" placeholder="To Username (recipient must be registered)" required>
+      <textarea id="messageContent" placeholder="Type your message..." rows="4" required></textarea>
+      <button type="submit" id="sendButton" disabled>Send Message</button>
+    </form>
+  </div>
+
+  <div class="messages">
+    <h2>Recent Messages</h2>
+    <div id="messageContainer">
+      <div th:if="${messages.empty}">
+        <p>No messages yet. Send the first message!</p>
+      </div>
+      <div th:each="msg : ${messages}" class="message">
+        <strong th:text="${msg.sender.username}">Sender</strong> → 
+        <strong th:text="${msg.recipient.username}">Recipient</strong>
+        <br>
+        <span th:text="${msg.content}">Message content</span>
+        <br>
+        <small th:text="${#temporals.format(msg.timestamp, 'yyyy-MM-dd HH:mm:ss')}">Timestamp</small>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 20px;">
+    <a href="/register">Register New User</a>
+  </div>
+
+  <!-- WebSocket Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+  <script>
+    let stompClient = null;
+    let currentUsername = /*[[${username}]]*/ 'Guest';
+    
+    function connect() {
+      const socket = new SockJS('/ws');
+      stompClient = Stomp.over(socket);
+      
+      stompClient.connect({}, function(frame) {
+        console.log('Connected: ' + frame);
+        updateConnectionStatus(true);
+        
+        // Subscribe to public messages
+        stompClient.subscribe('/topic/public', function(message) {
+          const messageData = JSON.parse(message.body);
+          displayMessage(messageData, true);
+        });
+        
+        // Enable the send button
+        document.getElementById('sendButton').disabled = false;
+      }, function(error) {
+        console.error('WebSocket connection error:', error);
+        updateConnectionStatus(false);
+        // Try to reconnect after 3 seconds
+        setTimeout(connect, 3000);
+      });
+    }
+    
+    function disconnect() {
+      if (stompClient !== null) {
+        stompClient.disconnect();
+      }
+      updateConnectionStatus(false);
+      console.log('Disconnected');
+    }
+    
+    function sendMessage() {
+      const recipient = document.getElementById('recipientInput').value.trim();
+      const content = document.getElementById('messageContent').value.trim();
+      
+      if (!recipient || !content) {
+        alert('Please fill in both recipient and message content');
+        return;
+      }
+      
+      const message = {
+        senderUsername: currentUsername,
+        recipientUsername: recipient,
+        content: content,
+        timestamp: new Date().toISOString()
+      };
+      
+      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(message));
+      
+      // Clear the form
+      document.getElementById('messageContent').value = '';
+    }
+    
+    function displayMessage(message, isNew = false) {
+      const messageContainer = document.getElementById('messageContainer');
+      
+      // Remove "No messages" text if present
+      const noMessagesText = messageContainer.querySelector('p');
+      if (noMessagesText && noMessagesText.textContent.includes('No messages yet')) {
+        noMessagesText.remove();
+      }
+      
+      const messageDiv = document.createElement('div');
+      messageDiv.className = isNew ? 'message new' : 'message';
+      
+      const timestamp = new Date(message.timestamp).toLocaleString();
+      
+      messageDiv.innerHTML = `
+        <strong>${message.sender ? message.sender.username : message.senderUsername}</strong> → 
+        <strong>${message.recipient ? message.recipient.username : message.recipientUsername}</strong>
+        <br>
+        <span>${message.content}</span>
+        <br>
+        <small>${timestamp}</small>
+      `;
+      
+      messageContainer.appendChild(messageDiv);
+      
+      // Scroll to bottom
+      messageContainer.scrollTop = messageContainer.scrollHeight;
+      
+      // Remove 'new' class after animation
+      if (isNew) {
+        setTimeout(() => {
+          messageDiv.classList.remove('new');
+        }, 300);
+      }
+    }
+    
+    function updateConnectionStatus(connected) {
+      const statusDiv = document.getElementById('connection-status');
+      if (connected) {
+        statusDiv.textContent = 'Connected to chat server - Messages will appear instantly!';
+        statusDiv.className = 'connection-status connected';
+      } else {
+        statusDiv.textContent = 'Disconnected from chat server - Trying to reconnect...';
+        statusDiv.className = 'connection-status disconnected';
+        document.getElementById('sendButton').disabled = true;
+      }
+    }
+    
+    // Event listeners
+    document.getElementById('messageForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      sendMessage();
+    });
+    
+    // Connect on page load
+    window.addEventListener('load', function() {
+      connect();
+    });
+    
+    // Disconnect on page unload
+    window.addEventListener('beforeunload', function() {
+      disconnect();
+    });
+    
+    // Handle Enter key in textarea
+    document.getElementById('messageContent').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
+
+
+===== ./src/main/resources/templates/login.html =====
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Login</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .login-form {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+      text-align: center;
+    }
+    h2 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 30px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0 20px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .links {
+      text-align: center;
+      margin-top: 20px;
+    }
+    .links a {
+      color: #007bff;
+      text-decoration: none;
+      margin: 0 10px;
+    }
+    .links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-form">
+    <h2>Login to Chat</h2>
+    
+    <form th:action="@{/login}" method="post">
+      <label>Username:</label>
+      <input type="text" name="username" required>
+
+      <label>Password:</label>
+      <input type="password" name="password" required>
+
+      <button type="submit">Login</button>
+    </form>
+
+    <div th:if="${error}" class="error" th:text="${error}"></div>
+
+    <div class="links">
+      <p>Don't have an account? <a href="/register">Register here</a></p>
+    </div>
+  </div>
+</body>
+</html>
+
+
+===== ./src/main/resources/templates/register.html =====
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Register</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .register-form {
+      background: #f5f5f5;
+      padding: 30px;
+      border-radius: 5px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .links {
+      text-align: center;
+      margin-top: 20px;
+    }
+    .links a {
+      color: #007bff;
+      text-decoration: none;
+    }
+    .links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="register-form">
+    <h2>Register New User</h2>
+    
+    <form th:action="@{/register}" method="post">
+      <label>Username:</label>
+      <input type="text" name="username" required>
+
+      <label>Password:</label>
+      <input type="password" name="password" required>
+
+      <button type="submit">Register</button>
+    </form>
+
+    <div th:if="${error}" class="error" th:text="${error}"></div>
+
+    <div class="links">
+      <p>Already have an account? <a href="/login">Login here</a></p>
+    </div>
+  </div>
+</body>
+</html>
+
+
+===== ./src/test/java/com/example/chat/ChatAppApplicationTests.java =====
+package com.example.chat;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+@SpringBootTest
+class ChatAppApplicationTests {
+
+	@Test
+	void contextLoads() {
+	}
+
+}
+
+
+===== ./target/classes/application.properties =====
+spring.application.name=chat-app
+server.port=8080
+
+spring.datasource.url=jdbc:postgresql://localhost:5432/chatdb
+spring.datasource.username=danish
+spring.datasource.password=12345
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.show-sql=true
+
+spring.thymeleaf.prefix=classpath:/templates/
+spring.thymeleaf.suffix=.html
+spring.mvc.view.prefix=  # leave blank if using Thymeleaf
+
+
+===== ./target/classes/templates/chat.html =====
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Room</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+    }
+    .success {
+      color: green;
+      margin: 10px 0;
+    }
+    .message-form {
+      background: #f5f5f5;
+      padding: 20px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+    .messages {
+      border: 1px solid #ddd;
+      padding: 20px;
+      border-radius: 5px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 10px;
+      border-left: 3px solid #007bff;
+      background: #f9f9f9;
+      animation: fadeIn 0.3s ease-in;
+    }
+    .message.new {
+      border-left-color: #28a745;
+      background: #e8f5e8;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .connection-status {
+      padding: 10px;
+      border-radius: 3px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Welcome to Chat Room, <span th:text="${username}">User</span>!</h1>
+
+  <div id="connection-status" class="connection-status disconnected">
+    Connecting to chat server...
+  </div>
+
+  <div th:if="${error}" class="error" th:text="${error}"></div>
+
+  <div class="message-form">
+    <h3>Send a Message</h3>
+    <form id="messageForm">
+      <input type="text" id="recipientInput" placeholder="To Username (recipient must be registered)" required>
+      <textarea id="messageContent" placeholder="Type your message..." rows="4" required></textarea>
+      <button type="submit" id="sendButton" disabled>Send Message</button>
+    </form>
+  </div>
+
+  <div class="messages">
+    <h2>Recent Messages</h2>
+    <div id="messageContainer">
+      <div th:if="${messages.empty}">
+        <p>No messages yet. Send the first message!</p>
+      </div>
+      <div th:each="msg : ${messages}" class="message">
+        <strong th:text="${msg.sender.username}">Sender</strong> → 
+        <strong th:text="${msg.recipient.username}">Recipient</strong>
+        <br>
+        <span th:text="${msg.content}">Message content</span>
+        <br>
+        <small th:text="${#temporals.format(msg.timestamp, 'yyyy-MM-dd HH:mm:ss')}">Timestamp</small>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 20px;">
+    <a href="/register">Register New User</a>
+  </div>
+
+  <!-- WebSocket Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+  <script>
+    let stompClient = null;
+    let currentUsername = /*[[${username}]]*/ 'Guest';
+    
+    function connect() {
+      const socket = new SockJS('/ws');
+      stompClient = Stomp.over(socket);
+      
+      stompClient.connect({}, function(frame) {
+        console.log('Connected: ' + frame);
+        updateConnectionStatus(true);
+        
+        // Subscribe to public messages
+        stompClient.subscribe('/topic/public', function(message) {
+          const messageData = JSON.parse(message.body);
+          displayMessage(messageData, true);
+        });
+        
+        // Enable the send button
+        document.getElementById('sendButton').disabled = false;
+      }, function(error) {
+        console.error('WebSocket connection error:', error);
+        updateConnectionStatus(false);
+        // Try to reconnect after 3 seconds
+        setTimeout(connect, 3000);
+      });
+    }
+    
+    function disconnect() {
+      if (stompClient !== null) {
+        stompClient.disconnect();
+      }
+      updateConnectionStatus(false);
+      console.log('Disconnected');
+    }
+    
+    function sendMessage() {
+      const recipient = document.getElementById('recipientInput').value.trim();
+      const content = document.getElementById('messageContent').value.trim();
+      
+      if (!recipient || !content) {
+        alert('Please fill in both recipient and message content');
+        return;
+      }
+      
+      const message = {
+        senderUsername: currentUsername,
+        recipientUsername: recipient,
+        content: content,
+        timestamp: new Date().toISOString()
+      };
+      
+      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(message));
+      
+      // Clear the form
+      document.getElementById('messageContent').value = '';
+    }
+    
+    function displayMessage(message, isNew = false) {
+      const messageContainer = document.getElementById('messageContainer');
+      
+      // Remove "No messages" text if present
+      const noMessagesText = messageContainer.querySelector('p');
+      if (noMessagesText && noMessagesText.textContent.includes('No messages yet')) {
+        noMessagesText.remove();
+      }
+      
+      const messageDiv = document.createElement('div');
+      messageDiv.className = isNew ? 'message new' : 'message';
+      
+      const timestamp = new Date(message.timestamp).toLocaleString();
+      
+      messageDiv.innerHTML = `
+        <strong>${message.sender ? message.sender.username : message.senderUsername}</strong> → 
+        <strong>${message.recipient ? message.recipient.username : message.recipientUsername}</strong>
+        <br>
+        <span>${message.content}</span>
+        <br>
+        <small>${timestamp}</small>
+      `;
+      
+      messageContainer.appendChild(messageDiv);
+      
+      // Scroll to bottom
+      messageContainer.scrollTop = messageContainer.scrollHeight;
+      
+      // Remove 'new' class after animation
+      if (isNew) {
+        setTimeout(() => {
+          messageDiv.classList.remove('new');
+        }, 300);
+      }
+    }
+    
+    function updateConnectionStatus(connected) {
+      const statusDiv = document.getElementById('connection-status');
+      if (connected) {
+        statusDiv.textContent = 'Connected to chat server - Messages will appear instantly!';
+        statusDiv.className = 'connection-status connected';
+      } else {
+        statusDiv.textContent = 'Disconnected from chat server - Trying to reconnect...';
+        statusDiv.className = 'connection-status disconnected';
+        document.getElementById('sendButton').disabled = true;
+      }
+    }
+    
+    // Event listeners
+    document.getElementById('messageForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      sendMessage();
+    });
+    
+    // Connect on page load
+    window.addEventListener('load', function() {
+      connect();
+    });
+    
+    // Disconnect on page unload
+    window.addEventListener('beforeunload', function() {
+      disconnect();
+    });
+    
+    // Handle Enter key in textarea
+    document.getElementById('messageContent').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
+
+
+===== ./target/classes/templates/login.html =====
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Login</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .login-form {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+      text-align: center;
+    }
+    h2 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 30px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0 20px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      font-size: 16px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .links {
+      text-align: center;
+      margin-top: 20px;
+    }
+    .links a {
+      color: #007bff;
+      text-decoration: none;
+      margin: 0 10px;
+    }
+    .links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-form">
+    <h2>Login to Chat</h2>
+    
+    <form th:action="@{/login}" method="post">
+      <label>Username:</label>
+      <input type="text" name="username" required>
+
+      <label>Password:</label>
+      <input type="password" name="password" required>
+
+      <button type="submit">Login</button>
+    </form>
+
+    <div th:if="${error}" class="error" th:text="${error}"></div>
+
+    <div class="links">
+      <p>Don't have an account? <a href="/register">Register here</a></p>
+    </div>
+  </div>
+</body>
+</html>
+
+
+===== ./target/classes/templates/register.html =====
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Register</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .register-form {
+      background: #f5f5f5;
+      padding: 30px;
+      border-radius: 5px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .links {
+      text-align: center;
+      margin-top: 20px;
+    }
+    .links a {
+      color: #007bff;
+      text-decoration: none;
+    }
+    .links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="register-form">
+    <h2>Register New User</h2>
+    
+    <form th:action="@{/register}" method="post">
+      <label>Username:</label>
+      <input type="text" name="username" required>
+
+      <label>Password:</label>
+      <input type="password" name="password" required>
+
+      <button type="submit">Register</button>
+    </form>
+
+    <div th:if="${error}" class="error" th:text="${error}"></div>
+
+    <div class="links">
+      <p>Already have an account? <a href="/login">Login here</a></p>
+    </div>
+  </div>
+</body>
+</html>
+
+
+===== ./target/maven-archiver/pom.properties =====
+artifactId=demo
+groupId=com.example
+version=0.0.1-SNAPSHOT
+
+
