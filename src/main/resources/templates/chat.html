@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <title>Chat Room</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .error {
+      color: red;
+      margin: 10px 0;
+    }
+    .success {
+      color: green;
+      margin: 10px 0;
+    }
+    .message-form {
+      background: #f5f5f5;
+      padding: 20px;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+    .messages {
+      border: 1px solid #ddd;
+      padding: 20px;
+      border-radius: 5px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 10px;
+      border-left: 3px solid #007bff;
+      background: #f9f9f9;
+      animation: fadeIn 0.3s ease-in;
+    }
+    .message.new {
+      border-left-color: #28a745;
+      background: #e8f5e8;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .connection-status {
+      padding: 10px;
+      border-radius: 3px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Welcome to Chat Room, <span th:text="${username}">User</span>!</h1>
+
+  <div id="connection-status" class="connection-status disconnected">
+    Connecting to chat server...
+  </div>
+
+  <div th:if="${error}" class="error" th:text="${error}"></div>
+
+  <div class="message-form">
+    <h3>Send a Message</h3>
+    <form id="messageForm">
+      <input type="text" id="recipientInput" placeholder="To Username (recipient must be registered)" required>
+      <textarea id="messageContent" placeholder="Type your message..." rows="4" required></textarea>
+      <button type="submit" id="sendButton" disabled>Send Message</button>
+    </form>
+  </div>
+
+  <div class="messages">
+    <h2>Recent Messages</h2>
+    <div id="messageContainer">
+      <div th:if="${messages.empty}">
+        <p>No messages yet. Send the first message!</p>
+      </div>
+      <div th:each="msg : ${messages}" class="message">
+        <strong th:text="${msg.sender.username}">Sender</strong> → 
+        <strong th:text="${msg.recipient.username}">Recipient</strong>
+        <br>
+        <span th:text="${msg.content}">Message content</span>
+        <br>
+        <small th:text="${#temporals.format(msg.timestamp, 'yyyy-MM-dd HH:mm:ss')}">Timestamp</small>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top: 20px;">
+    <a href="/register">Register New User</a>
+  </div>
+
+  <!-- WebSocket Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+
+  <script>
+    let stompClient = null;
+    let currentUsername = /*[[${username}]]*/ 'Guest';
+    
+    function connect() {
+      const socket = new SockJS('/ws');
+      stompClient = Stomp.over(socket);
+      
+      stompClient.connect({}, function(frame) {
+        console.log('Connected: ' + frame);
+        updateConnectionStatus(true);
+        
+        // Subscribe to public messages
+        stompClient.subscribe('/topic/public', function(message) {
+          const messageData = JSON.parse(message.body);
+          displayMessage(messageData, true);
+        });
+        
+        // Enable the send button
+        document.getElementById('sendButton').disabled = false;
+      }, function(error) {
+        console.error('WebSocket connection error:', error);
+        updateConnectionStatus(false);
+        // Try to reconnect after 3 seconds
+        setTimeout(connect, 3000);
+      });
+    }
+    
+    function disconnect() {
+      if (stompClient !== null) {
+        stompClient.disconnect();
+      }
+      updateConnectionStatus(false);
+      console.log('Disconnected');
+    }
+    
+    function sendMessage() {
+      const recipient = document.getElementById('recipientInput').value.trim();
+      const content = document.getElementById('messageContent').value.trim();
+      
+      if (!recipient || !content) {
+        alert('Please fill in both recipient and message content');
+        return;
+      }
+      
+      const message = {
+        senderUsername: currentUsername,
+        recipientUsername: recipient,
+        content: content,
+        timestamp: new Date().toISOString()
+      };
+      
+      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(message));
+      
+      // Clear the form
+      document.getElementById('messageContent').value = '';
+    }
+    
+    function displayMessage(message, isNew = false) {
+      const messageContainer = document.getElementById('messageContainer');
+      
+      // Remove "No messages" text if present
+      const noMessagesText = messageContainer.querySelector('p');
+      if (noMessagesText && noMessagesText.textContent.includes('No messages yet')) {
+        noMessagesText.remove();
+      }
+      
+      const messageDiv = document.createElement('div');
+      messageDiv.className = isNew ? 'message new' : 'message';
+      
+      const timestamp = new Date(message.timestamp).toLocaleString();
+      
+      messageDiv.innerHTML = `
+        <strong>${message.sender ? message.sender.username : message.senderUsername}</strong> → 
+        <strong>${message.recipient ? message.recipient.username : message.recipientUsername}</strong>
+        <br>
+        <span>${message.content}</span>
+        <br>
+        <small>${timestamp}</small>
+      `;
+      
+      messageContainer.appendChild(messageDiv);
+      
+      // Scroll to bottom
+      messageContainer.scrollTop = messageContainer.scrollHeight;
+      
+      // Remove 'new' class after animation
+      if (isNew) {
+        setTimeout(() => {
+          messageDiv.classList.remove('new');
+        }, 300);
+      }
+    }
+    
+    function updateConnectionStatus(connected) {
+      const statusDiv = document.getElementById('connection-status');
+      if (connected) {
+        statusDiv.textContent = 'Connected to chat server - Messages will appear instantly!';
+        statusDiv.className = 'connection-status connected';
+      } else {
+        statusDiv.textContent = 'Disconnected from chat server - Trying to reconnect...';
+        statusDiv.className = 'connection-status disconnected';
+        document.getElementById('sendButton').disabled = true;
+      }
+    }
+    
+    // Event listeners
+    document.getElementById('messageForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      sendMessage();
+    });
+    
+    // Connect on page load
+    window.addEventListener('load', function() {
+      connect();
+    });
+    
+    // Disconnect on page unload
+    window.addEventListener('beforeunload', function() {
+      disconnect();
+    });
+    
+    // Handle Enter key in textarea
+    document.getElementById('messageContent').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>
