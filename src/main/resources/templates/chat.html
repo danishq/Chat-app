@@ -10,6 +10,12 @@
       margin: 0 auto;
       padding: 20px;
     }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
     .error {
       color: red;
       margin: 10px 0;
@@ -69,6 +75,16 @@
       background: #ccc;
       cursor: not-allowed;
     }
+    .logout-btn {
+      background: #dc3545;
+      padding: 8px 16px;
+      text-decoration: none;
+      color: white;
+      border-radius: 3px;
+    }
+    .logout-btn:hover {
+      background: #c82333;
+    }
     .connection-status {
       padding: 10px;
       border-radius: 3px;
@@ -88,7 +104,10 @@
   </style>
 </head>
 <body>
-  <h1>Welcome to Chat Room, <span th:text="${username}">User</span>!</h1>
+  <div class="header">
+    <h1>Welcome to Chat Room, <span th:text="${username}">User</span>!</h1>
+    <a href="/logout" class="logout-btn">Logout</a>
+  </div>
 
   <div id="connection-status" class="connection-status disconnected">
     Connecting to chat server...
@@ -171,20 +190,18 @@
       const content = document.getElementById('messageContent').value.trim();
       
       if (!recipient || !content) {
-        alert('Please fill in both recipient and message content');
-        return;
+          alert('Please fill in both recipient and message content');
+          return;
       }
       
       const message = {
-        senderUsername: currentUsername,
-        recipientUsername: recipient,
-        content: content,
-        timestamp: new Date().toISOString()
+          // No need to send senderUsername - it will be taken from session
+          recipientUsername: recipient,
+          content: content,
+          timestamp: new Date().toISOString()
       };
       
       stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(message));
-      
-      // Clear the form
       document.getElementById('messageContent').value = '';
     }
     

@@ -1,9 +1,9 @@
 package com.example.chat.controller;
 
-import com.example.chat.model.ChatMessage;
 import com.example.chat.model.User;
-import com.example.chat.repository.MessageRepository;
+import com.example.chat.model.ChatMessage;
 import com.example.chat.repository.UserRepository;
+import com.example.chat.repository.MessageRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import jakarta.servlet.http.HttpSession;
-import java.time.LocalDateTime;
+import java.util.List;
 
 @Controller
 public class PageController {
@@ -39,38 +39,48 @@ public class PageController {
       HttpSession session,
       Model model) {
     try {
-      User user = userRepo.findByUsername(username);
-      if (user == null || !user.getPassword().equals(password)) {
-        model.addAttribute("error", "Invalid username or password");
+      // Add debug logging
+      System.out.println("Login attempt for username: " + username);
+
+      // Check if username is provided
+      if (username == null || username.trim().isEmpty()) {
+        model.addAttribute("error", "Username is required");
         return "login";
       }
 
-      // Store user in session
+      // Check if password is provided
+      if (password == null || password.trim().isEmpty()) {
+        model.addAttribute("error", "Password is required");
+        return "login";
+      }
+
+      User user = userRepo.findByUsername(username.trim());
+      System.out.println("User found: " + (user != null ? user.getUsername() : "null"));
+
+      if (user == null) {
+        model.addAttribute("error", "User not found. Please register first.");
+        model.addAttribute("showRegister", true);
+        return "login";
+      }
+
+      // Check password (consider using BCrypt for production)
+      if (!user.getPassword().equals(password)) {
+        model.addAttribute("error", "Invalid password");
+        return "login";
+      }
+
+      // Successful login
+      session.setAttribute("username", username.trim());
       session.setAttribute("loggedInUser", user);
       return "redirect:/chat";
+
     } catch (Exception e) {
+      System.err.println("Login error: " + e.getMessage());
       e.printStackTrace();
       model.addAttribute("error", "Login failed: " + e.getMessage());
+      model.addAttribute("showRegister", true);
       return "login";
     }
-  }
-
-  @GetMapping("/logout")
-  public String logout(HttpSession session) {
-    session.removeAttribute("loggedInUser");
-    return "redirect:/login";
-  }
-
-  @GetMapping("/chat")
-  public String chatPage(Model model, HttpSession session) {
-    User loggedInUser = (User) session.getAttribute("loggedInUser");
-    if (loggedInUser == null) {
-      return "redirect:/login";
-    }
-
-    model.addAttribute("username", loggedInUser.getUsername());
-    model.addAttribute("messages", messageRepo.findAll());
-    return "chat";
   }
 
   @GetMapping("/register")
@@ -81,63 +91,79 @@ public class PageController {
   @PostMapping("/register")
   public String registerUser(@RequestParam String username,
       @RequestParam String password,
-      HttpSession session,
       Model model) {
     try {
-      if (userRepo.findByUsername(username) != null) {
-        model.addAttribute("error", "Username already exists");
+      // Validate input
+      if (username == null || username.trim().isEmpty()) {
+        model.addAttribute("error", "Username is required");
         return "register";
       }
 
-      User newUser = new User();
-      newUser.setUsername(username);
-      newUser.setPassword(password); // NOTE: Should hash later
-      newUser = userRepo.save(newUser);
+      if (password == null || password.trim().isEmpty()) {
+        model.addAttribute("error", "Password is required");
+        return "register";
+      }
 
-      // Auto-login after registration
-      session.setAttribute("loggedInUser", newUser);
-      return "redirect:/chat";
+      // Check username length and format
+      if (username.trim().length() < 3) {
+        model.addAttribute("error", "Username must be at least 3 characters long");
+        return "register";
+      }
+
+      if (password.length() < 4) {
+        model.addAttribute("error", "Password must be at least 4 characters long");
+        return "register";
+      }
+
+      // Check if username already exists
+      if (userRepo.findByUsername(username.trim()) != null) {
+        model.addAttribute("error", "Username already exists. Please choose a different one.");
+        return "register";
+      }
+
+      // Create new user
+      User user = new User();
+      user.setUsername(username.trim());
+      user.setPassword(password); // In production, you should hash this password
+
+      User savedUser = userRepo.save(user);
+      System.out.println("New user registered: " + savedUser.getUsername());
+
+      model.addAttribute("success", "Registration successful! Please login with your credentials.");
+      return "login";
+
     } catch (Exception e) {
+      System.err.println("Registration error: " + e.getMessage());
       e.printStackTrace();
-      model.addAttribute("error", "Something went wrong: " + e.getMessage());
+      model.addAttribute("error", "Registration failed: " + e.getMessage());
       return "register";
     }
   }
 
-  @PostMapping("/send-message")
-  public String sendMessage(@RequestParam String recipient,
-      @RequestParam String content,
-      HttpSession session,
-      Model model) {
-    try {
-      User loggedInUser = (User) session.getAttribute("loggedInUser");
-      if (loggedInUser == null) {
-        return "redirect:/login";
-      }
-
-      User recipientUser = userRepo.findByUsername(recipient);
-      if (recipientUser == null) {
-        model.addAttribute("error", "Recipient not found");
-        model.addAttribute("username", loggedInUser.getUsername());
-        model.addAttribute("messages", messageRepo.findAll());
-        return "chat";
-      }
-
-      ChatMessage message = new ChatMessage();
-      message.setSender(loggedInUser);
-      message.setRecipient(recipientUser);
-      message.setContent(content);
-      message.setTimestamp(LocalDateTime.now());
-      messageRepo.save(message);
-
-      return "redirect:/chat";
-    } catch (Exception e) {
-      e.printStackTrace();
-      model.addAttribute("error", "Failed to send message: " + e.getMessage());
-      User loggedInUser = (User) session.getAttribute("loggedInUser");
-      model.addAttribute("username", loggedInUser != null ? loggedInUser.getUsername() : "Guest");
-      model.addAttribute("messages", messageRepo.findAll());
-      return "chat";
+  @GetMapping("/chat")
+  public String chatPage(HttpSession session, Model model) {
+    String username = (String) session.getAttribute("username");
+    if (username == null) {
+      return "redirect:/login";
     }
+
+    model.addAttribute("username", username);
+
+    try {
+      // Load recent messages (last 50 messages)
+      List<ChatMessage> messages = messageRepo.findTop50ByOrderByTimestampDesc();
+      model.addAttribute("messages", messages);
+    } catch (Exception e) {
+      System.err.println("Error loading messages: " + e.getMessage());
+      model.addAttribute("error", "Could not load messages");
+    }
+
+    return "chat";
+  }
+
+  @GetMapping("/logout")
+  public String logout(HttpSession session) {
+    session.invalidate();
+    return "redirect:/login";
   }
 }

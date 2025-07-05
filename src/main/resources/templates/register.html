@@ -2,43 +2,74 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
   <meta charset="UTF-8">
-  <title>Register</title>
+  <title>Register - Chat App</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       max-width: 400px;
       margin: 50px auto;
       padding: 20px;
+      background-color: #f5f5f5;
     }
     .register-form {
-      background: #f5f5f5;
+      background: white;
       padding: 30px;
-      border-radius: 5px;
+      border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
     .error {
-      color: red;
+      color: #dc3545;
       margin: 10px 0;
+      padding: 10px;
+      background-color: #f8d7da;
+      border: 1px solid #f5c6cb;
+      border-radius: 4px;
+    }
+    .success {
+      color: #155724;
+      margin: 10px 0;
+      padding: 10px;
+      background-color: #d4edda;
+      border: 1px solid #c3e6cb;
+      border-radius: 4px;
+    }
+    h2 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 30px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+      color: #555;
     }
     input[type="text"], input[type="password"] {
       width: 100%;
       padding: 12px;
-      margin: 10px 0;
+      margin: 10px 0 20px 0;
       border: 1px solid #ddd;
-      border-radius: 3px;
+      border-radius: 4px;
       box-sizing: border-box;
+      font-size: 16px;
+    }
+    input[type="text"]:focus, input[type="password"]:focus {
+      outline: none;
+      border-color: #28a745;
+      box-shadow: 0 0 0 2px rgba(40,167,69,0.25);
     }
     button {
-      background: #007bff;
+      background: #28a745;
       color: white;
       padding: 12px 20px;
       border: none;
-      border-radius: 3px;
+      border-radius: 4px;
       cursor: pointer;
       width: 100%;
+      font-size: 16px;
     }
     button:hover {
-      background: #0056b3;
+      background: #218838;
     }
     .links {
       text-align: center;
@@ -51,23 +82,47 @@
     .links a:hover {
       text-decoration: underline;
     }
+    .requirements {
+      background-color: #e9ecef;
+      padding: 15px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+    .requirements ul {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .requirements li {
+      margin-bottom: 5px;
+    }
   </style>
 </head>
 <body>
   <div class="register-form">
-    <h2>Register New User</h2>
+    <h2>Create New Account</h2>
+    
+    <div class="requirements">
+      <strong>Requirements:</strong>
+      <ul>
+        <li>Username: At least 3 characters</li>
+        <li>Password: At least 4 characters</li>
+        <li>Choose a unique username</li>
+      </ul>
+    </div>
     
     <form th:action="@{/register}" method="post">
       <label>Username:</label>
-      <input type="text" name="username" required>
+      <input type="text" name="username" required placeholder="Enter desired username" autofocus>
 
       <label>Password:</label>
-      <input type="password" name="password" required>
+      <input type="password" name="password" required placeholder="Enter password">
 
-      <button type="submit">Register</button>
+      <button type="submit">Create Account</button>
     </form>
 
     <div th:if="${error}" class="error" th:text="${error}"></div>
+    <div th:if="${success}" class="success" th:text="${success}"></div>
 
     <div class="links">
       <p>Already have an account? <a href="/login">Login here</a></p>

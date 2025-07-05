@@ -5,7 +5,9 @@ import com.example.chat.model.User;
 import com.example.chat.repository.MessageRepository;
 import com.example.chat.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.messaging.handler.annotation.*;
+import org.springframework.messaging.handler.annotation.MessageMapping;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.stereotype.Controller;
 
@@ -22,55 +24,42 @@ public class ChatController {
 
   @MessageMapping("/chat.sendMessage")
   @SendTo("/topic/public")
-  public ChatMessage sendMessage(@Payload ChatMessage message) {
+  public ChatMessage sendMessage(@Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
     try {
-      // Use the sender username from the message (sent from frontend)
-      User sender = userRepo.findByUsername(message.getSenderUsername());
-      if (sender == null) {
-        // Return error message
-        ChatMessage errorMessage = new ChatMessage();
-        errorMessage.setSenderUsername("System");
-        errorMessage.setRecipientUsername(message.getSenderUsername());
-        errorMessage.setContent("Error: Sender '" + message.getSenderUsername() + "' not found. Please log in again.");
-        errorMessage.setTimestamp(LocalDateTime.now());
-        return errorMessage;
+      String username = (String) headerAccessor.getSessionAttributes().get("username");
+      if (username == null) {
+        return createErrorMessage("System", "unknown", "Not authenticated");
       }
 
-      // Find recipient
+      User sender = userRepo.findByUsername(username);
+      if (sender == null) {
+        return createErrorMessage("System", username, "User not found");
+      }
+
       User recipient = userRepo.findByUsername(message.getRecipientUsername());
       if (recipient == null) {
-        // Return error message
-        ChatMessage errorMessage = new ChatMessage();
-        errorMessage.setSenderUsername("System");
-        errorMessage.setRecipientUsername(message.getSenderUsername());
-        errorMessage.setContent("Error: Recipient '" + message.getRecipientUsername()
-            + "' not found. Please make sure they are registered.");
-        errorMessage.setTimestamp(LocalDateTime.now());
-        return errorMessage;
+        return createErrorMessage("System", username,
+            "Recipient '" + message.getRecipientUsername() + "' not found");
       }
 
-      // Set up the message
       message.setSender(sender);
       message.setRecipient(recipient);
       message.setTimestamp(LocalDateTime.now());
+      message.setSenderUsername(sender.getUsername());
+      message.setRecipientUsername(recipient.getUsername());
 
-      // Save to database
-      ChatMessage savedMessage = messageRepo.save(message);
-
-      // Set the usernames for the WebSocket response
-      savedMessage.setSenderUsername(sender.getUsername());
-      savedMessage.setRecipientUsername(recipient.getUsername());
-
-      return savedMessage;
-
+      return messageRepo.save(message);
     } catch (Exception e) {
-      // Return error message
-      ChatMessage errorMessage = new ChatMessage();
-      errorMessage.setSenderUsername("System");
-      errorMessage.setRecipientUsername(message.getSenderUsername());
-      errorMessage.setContent("Error sending message: " + e.getMessage());
-      errorMessage.setTimestamp(LocalDateTime.now());
-      return errorMessage;
+      return createErrorMessage("System", "unknown", "Error: " + e.getMessage());
     }
+  }
+
+  private ChatMessage createErrorMessage(String sender, String recipient, String content) {
+    ChatMessage error = new ChatMessage();
+    error.setSenderUsername(sender);
+    error.setRecipientUsername(recipient);
+    error.setContent(content);
+    error.setTimestamp(LocalDateTime.now());
+    return error;
   }
 }
