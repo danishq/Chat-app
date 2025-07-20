@@ -71,7 +71,7 @@ psql -U postgres
 Run these SQL commands:
 
 ```sql
-CREATE USER danish WITH PASSWORD '12345';
+CREATE USER user WITH PASSWORD '12345';
 CREATE DATABASE chatdb OWNER user;
 GRANT ALL PRIVILEGES ON DATABASE chatdb TO user;
 \q
