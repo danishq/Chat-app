@@ -1,17 +1,19 @@
 package com.example.chat.controller;
 
-import com.example.chat.model.ChatMessage;
-import com.example.chat.model.User;
-import com.example.chat.repository.MessageRepository;
-import com.example.chat.repository.UserRepository;
+import java.time.LocalDateTime;
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
-import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 
-import java.time.LocalDateTime;
+import com.example.chat.model.ChatMessage; // <--- ADD THIS IMPORT
+import com.example.chat.model.User;
+import com.example.chat.repository.MessageRepository;
+import com.example.chat.repository.UserRepository;
 
 @Controller
 public class ChatController {
@@ -22,35 +24,76 @@ public class ChatController {
   @Autowired
   private UserRepository userRepo;
 
-  @MessageMapping("/chat.sendMessage")
-  @SendTo("/topic/public")
-  public ChatMessage sendMessage(@Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
-    try {
-      String username = (String) headerAccessor.getSessionAttributes().get("username");
-      if (username == null) {
-        return createErrorMessage("System", "unknown", "Not authenticated");
-      }
+  @Autowired
+  private SimpMessagingTemplate messagingTemplate; // <--- ADD THIS
 
-      User sender = userRepo.findByUsername(username);
+  // REMOVE @SendTo("/topic/public")
+  @MessageMapping("/chat.sendMessage")
+  public void sendMessage(@Payload ChatMessage message, SimpMessageHeaderAccessor headerAccessor) {
+    Map<String, Object> sessionAttributes = headerAccessor.getSessionAttributes();
+    if (sessionAttributes == null) {
+      System.err.println("No session attributes available");
+      return;
+    }
+
+    String senderUsername = (String) sessionAttributes.get("username");
+
+    if (senderUsername == null) {
+      System.err.println("No username in session attributes");
+      return;
+    }
+
+    try {
+      User sender = userRepo.findByUsername(senderUsername);
       if (sender == null) {
-        return createErrorMessage("System", username, "User not found");
+        messagingTemplate.convertAndSendToUser(
+            senderUsername,
+            "/queue/errors",
+            createErrorMessage("System", senderUsername, "Sender user not found"));
+        return;
       }
 
       User recipient = userRepo.findByUsername(message.getRecipientUsername());
       if (recipient == null) {
-        return createErrorMessage("System", username,
-            "Recipient '" + message.getRecipientUsername() + "' not found");
+        messagingTemplate.convertAndSendToUser(
+            senderUsername,
+            "/queue/errors",
+            createErrorMessage("System", senderUsername,
+                "Recipient '" + message.getRecipientUsername() + "' not found"));
+        return;
       }
 
       message.setSender(sender);
       message.setRecipient(recipient);
       message.setTimestamp(LocalDateTime.now());
-      message.setSenderUsername(sender.getUsername());
-      message.setRecipientUsername(recipient.getUsername());
+      message.setSenderUsername(sender.getUsername()); // Set transient fields for frontend
+      message.setRecipientUsername(recipient.getUsername()); // Set transient fields for frontend
 
-      return messageRepo.save(message);
+      ChatMessage savedMessage = messageRepo.save(message);
+
+      // Send message to recipient's private queue
+      // Format: /user/{username}/queue/messages
+      messagingTemplate.convertAndSendToUser(
+          recipient.getUsername(),
+          "/queue/messages",
+          savedMessage);
+
+      // Also send message to sender's private queue so they see their own sent
+      // messages
+      if (!sender.getUsername().equals(recipient.getUsername())) { // Avoid sending duplicate if self-chatting
+        messagingTemplate.convertAndSendToUser(
+            sender.getUsername(),
+            "/queue/messages",
+            savedMessage);
+      }
+
     } catch (Exception e) {
-      return createErrorMessage("System", "unknown", "Error: " + e.getMessage());
+      System.err.println("Error sending message: " + e.getMessage());
+      e.printStackTrace();
+      messagingTemplate.convertAndSendToUser(
+          senderUsername,
+          "/queue/errors",
+          createErrorMessage("System", senderUsername, "Error: " + e.getMessage()));
     }
   }
 

@@ -13,7 +13,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   @Override
   public void configureMessageBroker(MessageBrokerRegistry config) {
-    config.enableSimpleBroker("/topic");
+    // config.enableSimpleBroker("/topic"); // <--- REMOVE OR COMMENT OUT THIS LINE
+    config.enableSimpleBroker("/user"); // <--- ADD THIS FOR USER-SPECIFIC QUEUES
     config.setApplicationDestinationPrefixes("/app");
   }
 
@@ -22,5 +23,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     registry.addEndpoint("/ws")
         .withSockJS()
         .setInterceptors(new HttpSessionHandshakeInterceptor());
+    // Your custom interceptor HttpHandshakeInterceptor is also useful if you need
+    // to pass more custom attributes.
+    // For now, HttpSessionHandshakeInterceptor is good enough as it passes all
+    // session attributes.
   }
 }

@@ -52,6 +52,55 @@
       from { opacity: 0; transform: translateY(-10px); }
       to { opacity: 1; transform: translateY(0); }
     }
+    .message {
+      margin-bottom: 10px;
+      padding: 10px;
+      border-left: 3px solid #007bff;
+      background: #f9f9f9;
+      animation: fadeIn 0.3s ease-in;
+      word-wrap: break-word;
+      position: relative; /* Needed for absolute positioning of possible indicators */
+    }
+
+    /* Style for messages sent by the current user */
+    .message.sent-by-me {
+        background-color: #dcf8c6; /* Light green */
+        border-color: #4CAF50; /* Green */
+        text-align: right; /* Align text to the right */
+        margin-left: auto; /* Push to the right */
+        max-width: 80%; /* Limit width */
+    }
+
+    .message.sent-by-me strong {
+        color: #1a7a2a; /* Darker green for names */
+    }
+
+    /* Style for messages received by the current user */
+    .message.received-by-me {
+        background-color: #e0e0e0; /* Light gray */
+        border-color: #9e9e9e; /* Gray */
+        text-align: left; /* Align text to the left */
+        margin-right: auto; /* Push to the left */
+        max-width: 80%; /* Limit width */
+    }
+
+    .message.received-by-me strong {
+        color: #505050; /* Darker gray for names */
+    }
+
+    /* Adjust padding for message content in case of alignment */
+    .message span {
+        display: block; /* Ensures content takes full line for alignment */
+    }
+
+    .message.new {
+      border-left-color: #28a745;
+      background: #e8f5e8;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     input, textarea {
       width: 100%;
       padding: 10px;
@@ -149,133 +198,146 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
 
-  <script>
-    let stompClient = null;
-    let currentUsername = /*[[${username}]]*/ 'Guest';
-    
-    function connect() {
-      const socket = new SockJS('/ws');
-      stompClient = Stomp.over(socket);
-      
-      stompClient.connect({}, function(frame) {
-        console.log('Connected: ' + frame);
-        updateConnectionStatus(true);
-        
-        // Subscribe to public messages
-        stompClient.subscribe('/topic/public', function(message) {
-          const messageData = JSON.parse(message.body);
-          displayMessage(messageData, true);
+    <script>
+    let stompClient = null;
+    let currentUsername = /*[[${username}]]*/ 'Guest';
+    
+    function connect() {
+      const socket = new SockJS('/ws');
+      stompClient = Stomp.over(socket);
+      
+      stompClient.connect({}, function(frame) {
+        console.log('Connected: ' + frame);
+        updateConnectionStatus(true);
+        
+        // Subscribe to current user's private messages queue
+        // The '/user' prefix is handled automatically by Spring, just use '/queue/messages'
+        stompClient.subscribe('/user/queue/messages', function(message) { // <--- CHANGE THIS LINE
+          const messageData = JSON.parse(message.body);
+          displayMessage(messageData, true);
+        });
+
+        // Subscribe to current user's private error queue (optional but good for feedback)
+        stompClient.subscribe('/user/queue/errors', function(errorMsg) { // <--- ADD THIS
+            const errorData = JSON.parse(errorMsg.body);
+            alert("Error: " + errorData.content); // Simple alert for now
+            console.error("Server Error:", errorData);
         });
-        
-        // Enable the send button
-        document.getElementById('sendButton').disabled = false;
-      }, function(error) {
-        console.error('WebSocket connection error:', error);
-        updateConnectionStatus(false);
-        // Try to reconnect after 3 seconds
-        setTimeout(connect, 3000);
-      });
-    }
-    
-    function disconnect() {
-      if (stompClient !== null) {
-        stompClient.disconnect();
+        
+        // Enable the send button
+        document.getElementById('sendButton').disabled = false;
+      }, function(error) {
+        console.error('WebSocket connection error:', error);
+        updateConnectionStatus(false);
+        // Try to reconnect after 3 seconds
+        setTimeout(connect, 3000);
+      });
+    }
+    
+    function disconnect() {
+      if (stompClient !== null) {
+        stompClient.disconnect();
+      }
+      updateConnectionStatus(false);
+      console.log('Disconnected');
+    }
+    
+    function sendMessage() {
+      const recipient = document.getElementById('recipientInput').value.trim();
+      const content = document.getElementById('messageContent').value.trim();
+      
+      if (!recipient || !content) {
+          alert('Please fill in both recipient and message content');
+          return;
+      }
+      
+      const message = {
+          // No need to send senderUsername - it will be taken from session
+          recipientUsername: recipient,
+          content: content,
+          timestamp: new Date().toISOString()
+      };
+      
+      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(message));
+      document.getElementById('messageContent').value = '';
+    }
+    
+    function displayMessage(message, isNew = false) {
+      const messageContainer = document.getElementById('messageContainer');
+      
+      // Remove "No messages" text if present
+      const noMessagesText = messageContainer.querySelector('p');
+      if (noMessagesText && noMessagesText.textContent.includes('No messages yet')) {
+        noMessagesText.remove();
+      }
+      
+      const messageDiv = document.createElement('div');
+      messageDiv.className = isNew ? 'message new' : 'message';
+
+      // Add special class for messages sent by the current user
+      if (message.senderUsername === currentUsername) {
+          messageDiv.classList.add('sent-by-me');
+      } else if (message.recipientUsername === currentUsername) {
+          messageDiv.classList.add('received-by-me');
       }
-      updateConnectionStatus(false);
-      console.log('Disconnected');
-    }
-    
-    function sendMessage() {
-      const recipient = document.getElementById('recipientInput').value.trim();
-      const content = document.getElementById('messageContent').value.trim();
-      
-      if (!recipient || !content) {
-          alert('Please fill in both recipient and message content');
-          return;
-      }
-      
-      const message = {
-          // No need to send senderUsername - it will be taken from session
-          recipientUsername: recipient,
-          content: content,
-          timestamp: new Date().toISOString()
-      };
-      
-      stompClient.send("/app/chat.sendMessage", {}, JSON.stringify(message));
-      document.getElementById('messageContent').value = '';
-    }
-    
-    function displayMessage(message, isNew = false) {
-      const messageContainer = document.getElementById('messageContainer');
-      
-      // Remove "No messages" text if present
-      const noMessagesText = messageContainer.querySelector('p');
-      if (noMessagesText && noMessagesText.textContent.includes('No messages yet')) {
-        noMessagesText.remove();
-      }
-      
-      const messageDiv = document.createElement('div');
-      messageDiv.className = isNew ? 'message new' : 'message';
-      
-      const timestamp = new Date(message.timestamp).toLocaleString();
-      
-      messageDiv.innerHTML = `
-        <strong>${message.sender ? message.sender.username : message.senderUsername}</strong> → 
-        <strong>${message.recipient ? message.recipient.username : message.recipientUsername}</strong>
-        <br>
-        <span>${message.content}</span>
-        <br>
-        <small>${timestamp}</small>
-      `;
-      
-      messageContainer.appendChild(messageDiv);
-      
-      // Scroll to bottom
-      messageContainer.scrollTop = messageContainer.scrollHeight;
-      
-      // Remove 'new' class after animation
-      if (isNew) {
-        setTimeout(() => {
-          messageDiv.classList.remove('new');
-        }, 300);
-      }
-    }
-    
-    function updateConnectionStatus(connected) {
-      const statusDiv = document.getElementById('connection-status');
-      if (connected) {
-        statusDiv.textContent = 'Connected to chat server - Messages will appear instantly!';
-        statusDiv.className = 'connection-status connected';
-      } else {
-        statusDiv.textContent = 'Disconnected from chat server - Trying to reconnect...';
-        statusDiv.className = 'connection-status disconnected';
-        document.getElementById('sendButton').disabled = true;
-      }
-    }
-    
-    // Event listeners
-    document.getElementById('messageForm').addEventListener('submit', function(e) {
-      e.preventDefault();
-      sendMessage();
-    });
-    
-    // Connect on page load
-    window.addEventListener('load', function() {
-      connect();
-    });
-    
-    // Disconnect on page unload
-    window.addEventListener('beforeunload', function() {
-      disconnect();
-    });
-    
-    // Handle Enter key in textarea
-    document.getElementById('messageContent').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-  </script>
+
+      const timestamp = new Date(message.timestamp).toLocaleString();
+      
+      messageDiv.innerHTML = `
+        <strong>${message.sender ? message.sender.username : message.senderUsername}</strong> &rarr; 
+        <strong>${message.recipient ? message.recipient.username : message.recipientUsername}</strong>
+        <br>
+        <span>${message.content}</span>
+        <br>
+        <small>${timestamp}</small>
+      `;
+      
+      // Prepend the new message to the container to show it at the top
+      messageContainer.prepend(messageDiv);
+      
+      // Remove 'new' class after animation
+      if (isNew) {
+        setTimeout(() => {
+          messageDiv.classList.remove('new');
+        }, 300);
+      }
+    }
+    
+    function updateConnectionStatus(connected) {
+      const statusDiv = document.getElementById('connection-status');
+      if (connected) {
+        statusDiv.textContent = 'Connected to chat server - Messages will appear instantly!';
+        statusDiv.className = 'connection-status connected';
+      } else {
+        statusDiv.textContent = 'Disconnected from chat server - Trying to reconnect...';
+        statusDiv.className = 'connection-status disconnected';
+        document.getElementById('sendButton').disabled = true;
+      }
+    }
+    
+    // Event listeners
+    document.getElementById('messageForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      sendMessage();
+    });
+    
+    // Connect on page load
+    window.addEventListener('load', function() {
+      connect();
+    });
+    
+    // Disconnect on page unload
+    window.addEventListener('beforeunload', function() {
+      disconnect();
+    });
+    
+    // Handle Enter key in textarea
+    document.getElementById('messageContent').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
 </body>
 </html>

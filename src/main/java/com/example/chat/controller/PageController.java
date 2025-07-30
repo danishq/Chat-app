@@ -150,8 +150,9 @@ public class PageController {
     model.addAttribute("username", username);
 
     try {
-      // Load recent messages (last 50 messages)
-      List<ChatMessage> messages = messageRepo.findTop50ByOrderByTimestampDesc();
+      // Load messages relevant to the logged-in user (sent by or received by)
+      // Order them newest to oldest for "latest at top" display
+      List<ChatMessage> messages = messageRepo.findTopNMessagesForUser(username, 50); // <--- CHANGE THIS LINE
       model.addAttribute("messages", messages);
     } catch (Exception e) {
       System.err.println("Error loading messages: " + e.getMessage());
